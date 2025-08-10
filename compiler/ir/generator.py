@@ -106,6 +106,8 @@ class Generator(Interpreter):
             return self.builder.gep(obj_addr, indices, inbounds=True)
         if isinstance(node, UnaryOp) and node.op == '*':
             return self.visit(node.operand)
+        elif isinstance(node, UnaryOp) and node.op == '&':
+            return self.get_address(node.operand)
         raise Exception
 
     def parse_string(self, node):

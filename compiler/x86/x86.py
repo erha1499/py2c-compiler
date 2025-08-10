@@ -33,6 +33,9 @@ def x86_to_exe(x86, file_path='.', file_name='output'):
 
     output_path = Path(file_path) / (file_name + '.exe')
     command = ['clang', x86, '-o', output_path]
+    command += ['-Xlinker', '/defaultlib:libcmt','-Xlinker', '/defaultlib:oldnames',
+                '-Xlinker', '/defaultlib:libucrt','-Xlinker', '/defaultlib:libvcruntime',
+                '-Xlinker', '/defaultlib:legacy_stdio_definitions']
     subprocess.run(command, check=True)
 
     if not is_file(x86) and os.path.exists(temp_file_name):
