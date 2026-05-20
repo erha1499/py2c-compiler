@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -31,11 +32,19 @@ def x86_to_exe(x86, file_path='.', file_name='output'):
             x86 = temp_file.name
             temp_file_name = temp_file.name
 
-    output_path = Path(file_path) / (file_name + '.exe')
+    suffix = '.exe' if sys.platform.startswith('win') else ''
+    output_path = Path(file_path) / (file_name + suffix)
     command = ['clang', x86, '-o', output_path]
-    command += ['-Xlinker', '/defaultlib:libcmt','-Xlinker', '/defaultlib:oldnames',
-                '-Xlinker', '/defaultlib:libucrt','-Xlinker', '/defaultlib:libvcruntime',
-                '-Xlinker', '/defaultlib:legacy_stdio_definitions']
+
+    # Windows MSVC 兼容运行时库需要显式链接；macOS/Linux 不应传入这些参数。
+    if sys.platform.startswith('win'):
+        command += [
+            '-Xlinker', '/defaultlib:libcmt',
+            '-Xlinker', '/defaultlib:oldnames',
+            '-Xlinker', '/defaultlib:libucrt',
+            '-Xlinker', '/defaultlib:libvcruntime',
+            '-Xlinker', '/defaultlib:legacy_stdio_definitions',
+        ]
     subprocess.run(command, check=True)
 
     if not is_file(x86) and os.path.exists(temp_file_name):

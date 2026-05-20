@@ -1,29 +1,24 @@
-	.def	@feat.00;
-	.scl	3;
-	.type	0;
-	.endef
-	.globl	@feat.00
-.set @feat.00, 0
-	.file	"<string>"
-	.def	main;
-	.scl	2;
-	.type	32;
-	.endef
-	.text
-	.globl	main                            # -- Begin function main
-	.p2align	4
-main:                                   # @main
-# %bb.0:                                # %entry
-	subq	$40, %rsp
-	leaq	.Lstr(%rip), %rcx
-	callq	puts
-	xorl	%eax, %eax
-	addq	$40, %rsp
-	retq
-                                        # -- End function
-	.section	.rdata,"dr"
-.Lstr:                                  # @str
-	.asciz	"Hello, World!"
+	.section	__TEXT,__text,regular,pure_instructions
+	.build_version macos, 15, 0
+	.globl	_main                           ; -- Begin function main
+	.p2align	2
+_main:                                  ; @main
+; %bb.0:                                ; %entry
+	sub	sp, sp, #32
+	stp	x29, x30, [sp, #16]             ; 16-byte Folded Spill
+	mov	x9, sp
+	mov	w8, #1                          ; =0x1
+                                        ; kill: def $x8 killed $w8
+	str	x8, [x9]
+	adrp	x0, l_.str.2@PAGE
+	add	x0, x0, l_.str.2@PAGEOFF
+	bl	_printf
+	ldp	x29, x30, [sp, #16]             ; 16-byte Folded Reload
+	add	sp, sp, #32
+	ret
+                                        ; -- End function
+	.section	__TEXT,__const
+l_.str.2:                               ; @.str.2
+	.asciz	"%d "
 
-	.addrsig
-	.addrsig_sym puts
+.subsections_via_symbols
