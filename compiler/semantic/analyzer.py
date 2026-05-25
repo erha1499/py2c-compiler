@@ -32,6 +32,20 @@ class Analyzer(Interpreter):
 
     # ===============  辅助方法  ===============
 
+    @staticmethod
+    def _set_attrs(node, **kwargs):
+        """填充节点的 attrs 字典，同时同步传统属性。"""
+        for key, val in kwargs.items():
+            if val is not None:
+                node.attrs[key] = val
+        # 同步传统属性到 attrs
+        if node.ctype is not None and 'ctype' not in node.attrs:
+            node.attrs['ctype'] = node.ctype
+        if node.symbol is not None and 'symbol' not in node.attrs:
+            node.attrs['symbol'] = node.symbol
+        if node.index is not None and 'index' not in node.attrs:
+            node.attrs['index'] = node.index
+
     def parse_type(self, spec, decl=None):
         symbol = self.table.lookup(spec.type)
         if not symbol or symbol.kind != SymbolKind.TYPE:
@@ -244,6 +258,7 @@ class Analyzer(Interpreter):
 
         tree.decl.name.symbol = symbol
         tree.ctype = func_type
+        self._set_attrs(tree, rule=f"define_func({func_name}, [{', '.join(str(t) for t in param_types)}]) → {return_type}")
         self.curr_func = func_type
         self.table.enter_scope()
 
@@ -347,6 +362,7 @@ class Analyzer(Interpreter):
             var_init = decl.init
 
             decl.ctype = var_type
+            self._set_attrs(decl, rule=f"decl_var({var_name}) = {var_type}")
             if var_type == VOID:
                 self.raise_error(f"变量 '{var_name}' 不能被声明为 'void' 类型", decl.name)
                 return
@@ -372,6 +388,7 @@ class Analyzer(Interpreter):
             arr_init = decl.init
 
             decl.ctype = arr_type
+            self._set_attrs(decl, rule=f"decl_array({arr_name}) = {arr_type}")
             if arr_type.size is None and arr_init is None:
                 self.raise_error(f"数组 '{arr_name}' 没有初始化列表", decl)
                 return
@@ -465,6 +482,8 @@ class Analyzer(Interpreter):
             self.visit(expr)
         if tree.exprs:
             tree.ctype = tree.exprs[-1].ctype
+            self._set_attrs(tree, rule=f"expr_seq → {tree.ctype}",
+                derived_from=[f'expr[{len(tree.exprs)-1}].ctype={tree.ctype}'])
 
 
     def assign_op(self, tree):
@@ -486,6 +505,9 @@ class Analyzer(Interpreter):
                 elif not self.is_assignable(ltype, ctype):
                     self.raise_error(f"无法将 '{rtype}' 赋值给 '{ltype}'", tree)
             tree.ctype = ltype
+        self._set_attrs(tree,
+            rule=f"infer_assign({tree.op}, {tree.left.ctype}, {tree.right.ctype}) → {tree.ctype}",
+            derived_from=[f'lhs.ctype={tree.left.ctype}', f'rhs.ctype={tree.right.ctype}'])
 
     def binary_op(self, tree):
         self.visit(tree.left)
@@ -495,6 +517,9 @@ class Analyzer(Interpreter):
             self.raise_error(f"运算符 '{tree.op}' 无效", tree)
         else:
             tree.ctype = ctype
+        self._set_attrs(tree,
+            rule=f"infer_binary({tree.op}, {tree.left.ctype}, {tree.right.ctype}) → {tree.ctype}",
+            derived_from=[f'lhs.ctype={tree.left.ctype}', f'rhs.ctype={tree.right.ctype}'])
 
 
     def unary_op(self, tree):
@@ -527,6 +552,9 @@ class Analyzer(Interpreter):
                 tree.ctype = ctype
             else:
                 self.raise_error(f"运算符 '{op}' 的操作数必须是可修改的值或指针左值", tree.operand)
+        self._set_attrs(tree,
+            rule=f"infer_unary({op}, {ctype}) → {tree.ctype}",
+            derived_from=[f'operand.ctype={ctype}'])
 
     def postfix_op(self, tree):
         self.visit(tree.operand)
@@ -544,6 +572,7 @@ class Analyzer(Interpreter):
         ctype = tree.func.ctype
         if tree.func.value in ("printf", "scanf"):
             tree.ctype = ctype.type
+            self._set_attrs(tree, rule=f"builtin_call({tree.func.value}) → {tree.ctype}")
             return
         if not isinstance(ctype, FunctionType):
             self.raise_error("无法调用表达式", tree.func)
@@ -555,6 +584,9 @@ class Analyzer(Interpreter):
                 if not self.is_assignable(param, arg):
                     self.raise_error(f"函数调用第 {i + 1} 个参数类型期望 '{param}' 而非 {arg}", tree.args[i])
         tree.ctype = ctype.type
+        self._set_attrs(tree,
+            rule=f"func_call({tree.func.value}, [{', '.join(str(a) for a in args)}]) → {tree.ctype}",
+            derived_from=[f'func.type={ctype}'])
 
     def array_access(self, tree):
         self.visit(tree.array)
@@ -568,6 +600,9 @@ class Analyzer(Interpreter):
             tree.ctype = array_type.type
         else:
             self.raise_error(f"运算符 '[]' 只能用于指针或数组类型而非 '{array_type}'", tree)
+        self._set_attrs(tree,
+            rule=f"array_access({array_type}[{index_type}]) → {tree.ctype}",
+            derived_from=[f'array.ctype={array_type}', f'index.ctype={index_type}'])
 
     def member_access(self, tree):
         self.visit(tree.object)
@@ -589,6 +624,12 @@ class Analyzer(Interpreter):
             tree.ctype = comp_type.members[member_name]
             tree.member.ctype = tree.ctype
             tree.index = list(comp_type.members.keys()).index(member_name)
+            self._set_attrs(tree,
+                rule=f"member_access({comp_type.name}.{member_name}) → {tree.ctype}",
+                derived_from=[f'object.ctype={obj_type}', f'member={member_name}'])
+            # 成员标识符标注字段来源
+            self._set_attrs(tree.member,
+                rule=f"field({comp_type.name}, {member_name}) → {tree.ctype}")
         else:
             self.raise_error(f"类型 '{comp_type}' 中不存在名为 '{member_name}' 的成员", tree.member)
 
@@ -599,30 +640,51 @@ class Analyzer(Interpreter):
             return
         tree.ctype = symbol.type
         tree.symbol = symbol
+        self._set_attrs(tree,
+            rule=f"lookup({tree.value}) → {symbol.kind.name}:{symbol.type}",
+            derived_from=[f'symbol_table["{tree.value}"]'])
 
     @staticmethod
     def integer(tree):
         tree.ctype = INT
+        tree.attrs['value'] = int(tree.value, 0)
+        tree.attrs['rule'] = 'literal(int)'
+        tree.attrs['ctype'] = INT
 
     @staticmethod
     def decimal(tree):
         tree.ctype = FLOAT
+        tree.attrs['value'] = float(tree.value)
+        tree.attrs['rule'] = 'literal(float)'
+        tree.attrs['ctype'] = FLOAT
 
     @staticmethod
     def character(tree):
         tree.ctype = CHAR
+        tree.attrs['value'] = ord(tree.value)
+        tree.attrs['rule'] = 'literal(char)'
+        tree.attrs['ctype'] = CHAR
 
     @staticmethod
     def string(tree):
         tree.ctype = ArrayType(CHAR)
+        tree.attrs['value'] = tree.value
+        tree.attrs['rule'] = 'literal(string)'
+        tree.attrs['ctype'] = tree.ctype
 
     @staticmethod
     def bool(tree):
         tree.ctype = BOOL
+        tree.attrs['value'] = tree.value
+        tree.attrs['rule'] = 'literal(bool)'
+        tree.attrs['ctype'] = BOOL
 
     @staticmethod
     def nullptr(tree):
         tree.ctype = NULL
+        tree.attrs['value'] = None
+        tree.attrs['rule'] = 'literal(nullptr)'
+        tree.attrs['ctype'] = NULL
 
     def __default__(self, tree):
         for child in tree.children:

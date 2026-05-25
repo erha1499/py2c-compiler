@@ -57,7 +57,7 @@ class FunctionType(Type):
 
     def __repr__(self):
         type = str(self.type)
-        params = ', '.join(map(str, self.params))
+        params = ', '.join(map(str, self.params)) if self.params else ''
         return type + '(' + params + ')'
 
 

@@ -9,9 +9,14 @@ class ASTNode(Tree):
         self.line = meta.line if meta else -1
         self.column = meta.column if meta else -1
 
-        self.ctype = None
-        self.symbol = None
-        self.index = None
+        # 传统属性（保持向后兼容，generator / x86 代码直接读取）
+        self.ctype = None       # C 类型
+        self.symbol = None      # 符号表引用
+        self.index = None       # 结构体成员索引
+
+        # 统一属性字典 —— 供带注释语法树输出使用
+        # 包含：ctype, symbol, index, value, rule, derived_from, code, truelist, falselist, nextlist
+        self.attrs = {}
 
 
 class Program(ASTNode):
@@ -305,3 +310,120 @@ class NullPtr(ASTNode):
     def __init__(self, meta=None):
         super().__init__('nullptr', [], meta)
         self.value = None
+
+
+# ===============  带注释的语法树输出  ===============
+
+# attrs 中需要按教材风格展示的属性及其显示顺序
+_ATTR_ORDER = ['ctype', 'rule', 'derived_from', 'value', 'code', 'backpatch', 'truelist', 'falselist', 'nextlist', 'labels', 'symbol', 'index']
+
+
+def pretty_annotated(node, indent=0, indent_str='  '):
+    """生成带注释的语法树文本，教材级多行属性展示。
+    节点名称不变；每个语义属性以 `.attr = val` 形式追加在子节点之前。
+    """
+    data = str(node.data) if isinstance(node, Tree) else str(node)
+
+    # 收集注释行
+    attr_lines = _format_attrs(node, indent + 1, indent_str)
+
+    # 非 Tree 节点（普通字符串）直接返回
+    if not isinstance(node, Tree):
+        return indent_str * indent + data + '\n'
+
+    # 空子节点
+    if len(node.children) == 0:
+        if attr_lines:
+            return indent_str * indent + data + '\n' + '\n'.join(attr_lines) + '\n'
+        return indent_str * indent + data + '\n'
+
+    # 所有子节点都是非 Tree 的终值 → 同行输出
+    if all(not isinstance(c, Tree) for c in node.children):
+        line = indent_str * indent + data + '\t' + ' '.join(str(c) for c in node.children)
+        if attr_lines:
+            return line + '\n' + '\n'.join(attr_lines) + '\n'
+        return line + '\n'
+
+    # 有 Tree 子节点 → 递归缩进
+    result = indent_str * indent + data + '\n'
+    if attr_lines:
+        result += '\n'.join(attr_lines) + '\n'
+    for child in node.children:
+        if isinstance(child, Tree):
+            result += pretty_annotated(child, indent + 1, indent_str)
+        else:
+            result += indent_str * (indent + 1) + str(child) + '\n'
+    return result
+
+
+def _format_attrs(node, indent, indent_str):
+    """将节点 attrs 格式化为多行注释列表。"""
+    lines = []
+    prefix = indent_str * indent
+    # 同时收集直接属性（兼容未同步到 attrs 的情况）
+    if hasattr(node, 'ctype') and node.ctype is not None and 'ctype' not in node.attrs:
+        node.attrs['ctype'] = node.ctype
+    if hasattr(node, 'symbol') and node.symbol is not None and 'symbol' not in node.attrs:
+        sym = node.symbol
+        node.attrs['symbol'] = f'{sym.name}:{sym.kind.name}'
+    if hasattr(node, 'index') and node.index is not None and isinstance(node.index, int) and 'index' not in node.attrs:
+        node.attrs['index'] = node.index
+
+    attrs = getattr(node, 'attrs', {})
+    if not attrs:
+        return lines
+
+    for key in _ATTR_ORDER:
+        val = attrs.get(key)
+        if val is None:
+            continue
+
+        if key == 'symbol':
+            # Symbol 对象格式化为 name:KIND
+            if hasattr(val, 'name') and hasattr(val, 'kind'):
+                lines.append(f'{prefix}.symbol = {val.name}:{val.kind.name}')
+            else:
+                lines.append(f'{prefix}.symbol = {val}')
+        elif key == 'index':
+            # 只显示整型成员索引（过滤 ArrayAccess 的结构属性）
+            if isinstance(val, int):
+                lines.append(f'{prefix}.index = {val}')
+        elif key == 'derived_from':
+            if isinstance(val, list):
+                items = ', '.join(val)
+                lines.append(f'{prefix}.derived_from = [{items}]')
+            else:
+                lines.append(f'{prefix}.derived_from = {val}')
+        elif key == 'value':
+            if val is not None:
+                lines.append(f'{prefix}.value = {val}')
+        elif key == 'code':
+            if isinstance(val, list):
+                lines.append(f'{prefix}.code')
+                for instr in val:
+                    lines.append(f'{prefix}{indent_str}.{instr}')
+            else:
+                lines.append(f'{prefix}.code = {val}')
+        elif key == 'backpatch':
+            if isinstance(val, list):
+                for bp in val:
+                    lines.append(f'{prefix}.{bp}')
+        elif key == 'truelist':
+            if isinstance(val, list) and val:
+                items = ', '.join(f'.{x:03d}' for x in val)
+                lines.append(f'{prefix}.truelist = [{items}]')
+        elif key == 'falselist':
+            if isinstance(val, list) and val:
+                items = ', '.join(f'.{x:03d}' for x in val)
+                lines.append(f'{prefix}.falselist = [{items}]')
+        elif key == 'nextlist':
+            if isinstance(val, list) and val:
+                items = ', '.join(f'.{x:03d}' for x in val)
+                lines.append(f'{prefix}.nextlist = [{items}]')
+        elif key == 'labels':
+            if isinstance(val, dict):
+                for lbl_name, lbl_line in val.items():
+                    lines.append(f'{prefix}.label {lbl_name} = .{lbl_line:03d}')
+        else:
+            lines.append(f'{prefix}.{key} = {val}')
+    return lines
