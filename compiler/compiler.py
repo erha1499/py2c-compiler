@@ -118,6 +118,7 @@ class Compiler:
         """
         self.lexer.save(file_path)
         self.parser.save(file_path)
+        self.annotator.save(file_path)
         self.generator.save(file_path)
         self.optimizer.save(file_path)
         self._save_annotated_ast(file_path)

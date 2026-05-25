@@ -16,10 +16,13 @@
 - 回填函数 _backpatch 将 goto _ 替换为真实的 goto Ln
 """
 
+from pathlib import Path
+
 from lark import Tree
 from lark.visitors import Interpreter
 
 from compiler.tree import *
+from compiler.utils import write_file
 
 
 class Annotator(Interpreter):
@@ -136,7 +139,77 @@ class Annotator(Interpreter):
         self.instr_cnt = 0
         self.code_buffer = []
         self.visit(tree)
+        self._annotated_tree = tree
         return tree
+
+    def save(self, file_path=''):
+        """将三地址码（四元式）输出到 05 tac.txt 文件。
+
+        从已标注的 AST 中提取每个函数的 TAC 代码块，
+        按指定格式编排后写入文件，方便学习对照。
+
+        输出格式:
+            .func main:
+                    .001: i = 0
+                    .002: count = 0
+                    ...
+            .ret
+
+        Args:
+            file_path: 输出目录路径
+        """
+        if not hasattr(self, '_annotated_tree') or self._annotated_tree is None:
+            return
+        tac_text = self._format_tac(self._annotated_tree)
+        write_file(tac_text, Path(file_path) / '06 tac.txt')
+
+    @staticmethod
+    def _format_tac(tree):
+        """递归遍历 AST，收集每个函数定义的三地址码并格式化。
+
+        转换规则:
+        - 函数头 'func xxx:' → '.func xxx:'
+        - TAC 指令 'NNN: xxx' → '        .NNN: xxx'   (8 空格缩进)
+        - 函数尾 'ret' → '.ret'
+
+        Args:
+            tree: AST 根节点或子节点
+
+        Returns:
+            格式化后的 TAC 文本
+        """
+        lines = []
+
+        # 先检查 ASTNode（ASTNode 继承自 Tree，需要优先匹配）
+        if isinstance(tree, ASTNode):
+            if isinstance(tree, FunctionDefinition):
+                if 'code' in tree.attrs:
+                    code = tree.attrs['code']
+                    for entry in code:
+                        if entry.startswith('func '):
+                            lines.append('.' + entry)
+                        elif entry == 'ret':
+                            lines.append('.ret')
+                        else:
+                            lines.append(f'        .{entry}')
+                    lines.append('')
+
+            for child in tree.children:
+                if isinstance(child, (ASTNode, Tree)):
+                    result = Annotator._format_tac(child)
+                    if result:
+                        lines.append(result)
+
+        # Lark Tree 层面（仅处理未被 ASTNode 覆盖的纯 Tree 节点）
+        elif isinstance(tree, Tree):
+            # 纯 Lark Tree 节点 → 递归遍历子节点查找 func_def
+            for child in tree.children:
+                if isinstance(child, (Tree, ASTNode)):
+                    result = Annotator._format_tac(child)
+                    if result:
+                        lines.append(result)
+
+        return '\n'.join(lines)
 
     # ---- 程序层 ----
 
